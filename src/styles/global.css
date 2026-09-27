@@ -47,6 +47,14 @@ button:focus-visible, a:focus-visible, sl-button:focus-visible, sl-input:focus-v
 .issue-counts .warning { color: #8a5209; background: #fff0d8; }
 .issue-counts .info { color: #1f5e8b; background: #e7f1f8; }
 
+.export-blocker { display: flex; align-items: center; gap: 16px; padding: 10px 20px; background: #fdf0ee; border-bottom: 1px solid #ecc9c4; }
+.export-blocker-copy { display: grid; gap: 2px; }
+.export-blocker-copy b { color: #9c2b22; font-size: 12px; }
+.export-blocker-copy span { color: #7c4a44; font-size: 10px; }
+.export-blocker-list { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
+.export-blocker-list button { border: 1px solid #e0b3ac; border-radius: 99px; background: #fff; color: #8f2f26; padding: 4px 10px; font-size: 10px; font-weight: 700; cursor: pointer; }
+.export-blocker-list button:hover { background: #fdeae7; border-color: #c96c62; }
+
 .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 270px minmax(560px, 1fr) 420px; gap: 1px; background: #d2d9d5; }
 .outline-panel, .editor-panel, .review-panel { min-height: 0; background: var(--paper); }
 .outline-panel { padding: 14px 12px; overflow-y: auto; }
@@ -78,7 +86,8 @@ kbd { display: inline-block; padding: 2px 5px; border: 1px solid #c9d0cc; border
 .editor-head { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 13px; }
 .eyebrow { color: #77827d; font-size: 9px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .editor-head h1 { margin: 3px 0 0; font-size: 20px; }
-.review-actions { display: flex; gap: 6px; }
+.review-actions { display: flex; gap: 6px; align-items: center; }
+.review-hint { color: #9c2b22; font-size: 10px; font-weight: 700; }
 .active-issues { display: grid; gap: 7px; margin-bottom: 12px; }
 .issue-card { border: 1px solid #e3d7c4; border-left: 4px solid var(--amber); border-radius: 9px; padding: 11px; background: #fffbf3; }
 .issue-card.error { border-color: #efd1ce; border-left-color: var(--red); background: #fff8f7; }
@@ -147,6 +156,8 @@ sl-textarea::part(textarea) { line-height: 1.65; }
 .issue-list button b { font-size: 10px; }
 .issue-list button small { color: #74807a; font-size: 9px; line-height: 1.4; }
 .version-diff { display: grid; gap: 7px; margin-top: 8px; }
+.version-meta { margin: 2px 0 8px; padding: 6px 8px; border-radius: 7px; background: #f2f6f3; color: #4d6156; font-size: 10px; font-weight: 700; }
+.version-card > sl-button { margin-top: 8px; }
 .diff-column { border-left: 3px solid #c58124; background: #fffaf1; border-radius: 6px; padding: 7px 8px; }
 .diff-column.current { border-left-color: #34795d; background: #f2f9f5; }
 .diff-column span { color: #7b8580; font-size: 8px; font-weight: 800; text-transform: uppercase; }

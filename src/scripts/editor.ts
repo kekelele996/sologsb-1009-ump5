@@ -222,6 +222,12 @@ function sentenceLength(text: string) {
   return /[A-Za-z]/.test(text) ? text.trim().split(/\s+/).length : normalized.length;
 }
 
+// 检查结果以当前无障碍稿为准：图片看替代文本，其余块看无障碍文本（未改写时回退原文）。
+function draftText(block: ContentBlock) {
+  if (block.type === "image") return block.imageAlt || block.accessibleText;
+  return block.accessibleText || block.text;
+}
+
 function analyze(project: ChapterProject): AccessibilityIssue[] {
   const issues: AccessibilityIssue[] = [];
   let lastHeading = 0;
@@ -253,7 +259,7 @@ function analyze(project: ChapterProject): AccessibilityIssue[] {
       });
     }
     if (block.type === "link") {
-      const label = block.accessibleText || block.text;
+      const label = draftText(block);
       if (/^(点击这里|这里|链接|更多|here|click here|read more)$/i.test(label.trim())) {
         issues.push({
           id: `link-${block.id}`,
@@ -266,7 +272,7 @@ function analyze(project: ChapterProject): AccessibilityIssue[] {
         });
       }
     }
-    const text = block.type === "image" ? block.text : block.text;
+    const text = draftText(block);
     const sentences = text.split(/(?<=[。！？!?])\s*/).filter(Boolean);
     for (const [index, sentence] of sentences.entries()) {
       if (sentenceLength(sentence) > (/[A-Za-z]/.test(sentence) ? 28 : 42)) {
@@ -281,9 +287,9 @@ function analyze(project: ChapterProject): AccessibilityIssue[] {
         });
       }
     }
-    const source = `${block.text} ${block.accessibleText}`;
+    const draft = draftText(block);
     for (const term of project.glossary) {
-      if (source.includes(term.source) && block.accessibleText && !block.accessibleText.includes(term.preferred)) {
+      if (draft && draft.includes(term.source) && !draft.includes(term.preferred)) {
         issues.push({
           id: `term-${block.id}-${term.id}`,
           blockId: block.id,
@@ -337,6 +343,12 @@ function severityLabel(severity: Severity) {
   if (severity === "error") return "必须修复";
   if (severity === "warning") return "建议优化";
   return "一致性提醒";
+}
+
+function reviewProgress(blocks: ContentBlock[]) {
+  const approved = blocks.filter((block) => block.reviewStatus === "approved").length;
+  const needsWork = blocks.filter((block) => block.reviewStatus === "needs-work").length;
+  return { approved, needsWork, pending: blocks.length - approved - needsWork };
 }
 
 function exportHtml(project: ChapterProject) {
@@ -411,6 +423,7 @@ let showGlossary = false;
 let undoStack: ChapterProject[] = [];
 let redoStack: ChapterProject[] = [];
 let saveTimer = 0;
+let exportBlockerVisible = false;
 
 const activeBlock = () => project.blocks.find((block) => block.id === activeBlockId) ?? project.blocks[0];
 const issues = () => analyze(project);
@@ -462,10 +475,13 @@ function updateActiveBlock(update: (block: ContentBlock, draft: ChapterProject) 
 
 function render() {
   const list = issues();
+  const errorIssues = list.filter((issue) => issue.severity === "error");
   const active = activeBlock();
   const activeIssues = list.filter((issue) => issue.blockId === active.id);
+  const activeErrors = activeIssues.filter((issue) => issue.severity === "error");
   const approved = project.blocks.filter((block) => block.reviewStatus === "approved").length;
   const version = project.versions.find((item) => item.id === selectedVersionId) ?? project.versions[0];
+  const versionProgress = version ? reviewProgress(version.blocks) : null;
 
   app.innerHTML = `
     <div class="app-shell">
@@ -495,6 +511,18 @@ function render() {
         </div>
       </div>
 
+      ${exportBlockerVisible && errorIssues.length ? `
+      <div class="export-blocker" role="alert">
+        <div class="export-blocker-copy">
+          <b>导出已拦截</b>
+          <span>当前无障碍稿还有 ${errorIssues.length} 个必须修复的问题。请逐条处理以下段落，全部解决后才能导出。</span>
+        </div>
+        <div class="export-blocker-list">
+          ${errorIssues.map((issue) => `<button data-action="jump-issue" data-issue-id="${issue.id}" data-block-id="${issue.blockId}">段 ${project.blocks.findIndex((block) => block.id === issue.blockId) + 1} · ${escapeHtml(issue.title)}</button>`).join("")}
+        </div>
+        <sl-button size="small" variant="text" data-action="dismiss-export-blocker">知道了</sl-button>
+      </div>` : ""}
+
       <div class="workspace">
         <aside class="outline-panel">
           <div class="panel-title"><span>章节结构</span><sl-badge>${project.blocks.length} 块</sl-badge></div>
@@ -518,7 +546,8 @@ function render() {
           <div class="editor-head">
             <div><span class="eyebrow">当前内容块</span><h1>${blockRole(active)}</h1></div>
             <div class="review-actions">
-              <sl-button size="small" variant="${active.reviewStatus === "approved" ? "success" : "default"}" data-action="approve">${active.reviewStatus === "approved" ? "✓ 已通过" : "审核通过"}</sl-button>
+              ${activeErrors.length ? `<span class="review-hint">还有 ${activeErrors.length} 个必须修复的问题，处理后才能通过</span>` : ""}
+              <sl-button size="small" variant="${active.reviewStatus === "approved" ? "success" : "default"}" ${activeErrors.length ? "disabled" : ""} data-action="approve">${active.reviewStatus === "approved" ? "✓ 已通过" : "审核通过"}</sl-button>
               <sl-button size="small" variant="${active.reviewStatus === "needs-work" ? "danger" : "default"}" data-action="needs-work">需修改</sl-button>
             </div>
           </div>
@@ -573,7 +602,7 @@ function render() {
           </section>
 
           <section class="issues-panel">
-            <div class="section-heading"><div><span class="eyebrow">All checks</span><h2>全章问题</h2></div><sl-button size="small" variant="default" outline data-action="approve-all">全部通过</sl-button></div>
+            <div class="section-heading"><div><span class="eyebrow">All checks</span><h2>全章问题</h2></div><sl-button size="small" variant="default" outline data-action="approve-all">通过合格块</sl-button></div>
             <div class="issue-list">
               ${list.length ? list.map((issue) => `<button class="${issue.id === activeIssueId ? "active" : ""} ${issue.severity}" data-action="jump-issue" data-issue-id="${issue.id}" data-block-id="${issue.blockId}"><span>${severityLabel(issue.severity)}</span><b>${escapeHtml(issue.title)}</b><small>段 ${project.blocks.findIndex((block) => block.id === issue.blockId) + 1} · ${escapeHtml(issue.suggestion)}</small></button>`).join("") : `<div class="issue-clear">✓ 全章检查通过</div>`}
             </div>
@@ -583,7 +612,9 @@ function render() {
             <div class="section-heading"><div><span class="eyebrow">Version compare</span><h2>版本比较</h2></div><sl-badge>${project.versions.length} 版</sl-badge></div>
             ${project.versions.length ? `
               <sl-select id="version-select" size="small" value="${version?.id ?? ""}">${project.versions.map((item) => `<sl-option value="${item.id}">${escapeHtml(item.label)} · ${new Date(item.createdAt).toLocaleTimeString()}</sl-option>`).join("")}</sl-select>
+              ${version && versionProgress ? `<div class="version-meta">保存时审校进度：${versionProgress.approved}/${version.blocks.length} 已通过 · ${versionProgress.pending} 待审核 · ${versionProgress.needsWork} 需修改</div>` : ""}
               <div class="version-diff">${version ? renderVersionDiff(version, active) : ""}</div>
+              ${version ? `<sl-button size="small" variant="default" outline data-action="restore-version" data-version-id="${version.id}">恢复此版本（含审校进度）</sl-button>` : ""}
             ` : `<div class="empty-note">保存版本后，可比较改写前后的无障碍文本。</div>`}
           </section>
         </aside>
@@ -645,15 +676,15 @@ function renderPreview() {
 function renderVersionDiff(version: VersionSnapshot, current: ContentBlock) {
   const oldBlock = version.blocks.find((block) => block.id === current.id);
   if (!oldBlock) return `<div class="empty-note">当前内容块不在该版本中。</div>`;
-  return `<div class="diff-column"><span>旧版</span><p>${escapeHtml(oldBlock.accessibleText || oldBlock.text)}</p></div><div class="diff-column current"><span>当前</span><p>${escapeHtml(current.accessibleText || current.text)}</p></div>`;
+  return `<div class="diff-column"><span>旧版 · ${statusLabel(oldBlock.reviewStatus)}</span><p>${escapeHtml(oldBlock.accessibleText || oldBlock.text)}</p></div><div class="diff-column current"><span>当前 · ${statusLabel(current.reviewStatus)}</span><p>${escapeHtml(current.accessibleText || current.text)}</p></div>`;
 }
 
 function wireLiveFields() {
   app.querySelectorAll<HTMLElement>("sl-input[data-field], sl-textarea[data-field], sl-select[data-field]").forEach((element) => {
     element.addEventListener("sl-input", () => {
       const value = (element as HTMLElement & { value: string }).value;
+      const field = element.dataset.field;
       updateActiveBlock((block) => {
-        const field = element.dataset.field;
         if (field === "source") block.text = value;
         if (field === "accessible") {
           block.accessibleText = value;
@@ -665,7 +696,8 @@ function wireLiveFields() {
         }
         if (field === "link-href") block.linkHref = value;
         if (field === "reason") block.changeReason = value;
-        block.reviewStatus = "pending";
+        // 改动无障碍文本、链接地址或图片替代文字后，该块回到待审核；标题层级在 sl-change 中处理。
+        if (field === "accessible" || field === "image-alt" || field === "link-href") block.reviewStatus = "pending";
       }, "编辑无障碍文本", false);
     });
     element.addEventListener("sl-change", () => render());
@@ -701,7 +733,15 @@ app.addEventListener("click", (event) => {
       current.reviewStatus = "pending";
     }, "生成易读版本");
   }
-  if (action === "approve") updateActiveBlock((block) => { block.reviewStatus = "approved"; }, "审核通过");
+  if (action === "approve") {
+    const blockers = issues().filter((issue) => issue.blockId === activeBlock().id && issue.severity === "error");
+    if (blockers.length) {
+      document.documentElement.dataset.lastAction = `无法通过：当前内容块还有 ${blockers.length} 个必须修复的问题`;
+      render();
+    } else {
+      updateActiveBlock((block) => { block.reviewStatus = "approved"; }, "审核通过");
+    }
+  }
   if (action === "needs-work") updateActiveBlock((block) => { block.reviewStatus = "needs-work"; }, "标记需修改");
   if (action === "add-comment") {
     const input = app.querySelector<HTMLElement & { value: string }>("#new-comment");
@@ -750,12 +790,45 @@ app.addEventListener("click", (event) => {
     render();
   }
   if (action === "approve-all") {
-    commit("全部审核通过", (draft) => { draft.blocks.forEach((block) => { block.reviewStatus = "approved"; }); });
+    const blockedIds = new Set(issues().filter((issue) => issue.severity === "error").map((issue) => issue.blockId));
+    const eligible = project.blocks.filter((block) => !blockedIds.has(block.id));
+    const label = blockedIds.size
+      ? `已通过 ${eligible.length} 个合格内容块，${blockedIds.size} 个块仍有必须修复的问题`
+      : "全部内容块审核通过";
+    commit(label, (draft) => {
+      draft.blocks.forEach((block) => { if (!blockedIds.has(block.id)) block.reviewStatus = "approved"; });
+    });
   }
   if (action === "export") {
-    download(`${project.title}-无障碍版.html`, exportHtml(project));
-    document.documentElement.dataset.lastAction = "已导出无障碍 HTML";
+    const blockers = issues().filter((issue) => issue.severity === "error");
+    if (blockers.length) {
+      exportBlockerVisible = true;
+      activeIssueId = blockers[0].id;
+      activeBlockId = blockers[0].blockId;
+      document.documentElement.dataset.lastAction = `导出被拦截：还有 ${blockers.length} 个必须修复的问题待处理`;
+      render();
+    } else {
+      exportBlockerVisible = false;
+      download(`${project.title}-无障碍版.html`, exportHtml(project));
+      document.documentElement.dataset.lastAction = "已导出无障碍 HTML";
+      render();
+    }
+  }
+  if (action === "dismiss-export-blocker") {
+    exportBlockerVisible = false;
     render();
+  }
+  if (action === "restore-version") {
+    const version = project.versions.find((item) => item.id === target.dataset.versionId);
+    if (version) {
+      commit(`恢复${version.label}（含审校进度）`, (draft) => {
+        draft.blocks = structuredClone(version.blocks);
+        draft.glossary = structuredClone(version.glossary);
+      }, false);
+      if (!project.blocks.some((block) => block.id === activeBlockId)) activeBlockId = project.blocks[0]?.id ?? "";
+      activeIssueId = "";
+      render();
+    }
   }
   if (action === "import") app.querySelector<HTMLInputElement>("#chapter-file")?.click();
 });
@@ -782,12 +855,16 @@ app.addEventListener("change", (event) => {
   const input = event.target as HTMLInputElement;
   if (input.id !== "chapter-file" || !input.files?.[0]) return;
   void input.files[0].text().then((text) => {
+    // 导入的新章节从“待审核”开始，审校进度随新内容重新计算。
     commit("导入章节文本", (draft) => {
       draft.blocks = parseImportedChapter(text);
-      activeBlockId = draft.blocks[0]?.id ?? "";
-      activeIssueId = "";
-    });
+    }, false);
+    activeBlockId = project.blocks[0]?.id ?? "";
+    activeIssueId = "";
+    exportBlockerVisible = false;
+    render();
   });
+  input.value = "";
 });
 
 app.addEventListener("input", (event) => {
@@ -812,7 +889,10 @@ window.addEventListener("keydown", (event) => {
   if (command && event.key.toLowerCase() === "s") {
     event.preventDefault();
     const versionId = uid("version");
-    commit("键盘保存版本", (draft) => { draft.versions.unshift({ id: versionId, label: `版本 ${draft.versions.length + 1}`, createdAt: new Date().toISOString(), blocks: structuredClone(draft.blocks), glossary: structuredClone(draft.glossary) }); });
+    commit("键盘保存版本", (draft) => {
+      draft.versions.unshift({ id: versionId, label: `版本 ${draft.versions.length + 1}`, createdAt: new Date().toISOString(), blocks: structuredClone(draft.blocks), glossary: structuredClone(draft.glossary) });
+      draft.versions = draft.versions.slice(0, 10);
+    });
     selectedVersionId = versionId;
     return;
   }
