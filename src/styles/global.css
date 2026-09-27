@@ -78,7 +78,8 @@ kbd { display: inline-block; padding: 2px 5px; border: 1px solid #c9d0cc; border
 .editor-head { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 13px; }
 .eyebrow { color: #77827d; font-size: 9px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .editor-head h1 { margin: 3px 0 0; font-size: 20px; }
-.review-actions { display: flex; gap: 6px; }
+.review-actions { display: flex; gap: 6px; align-items: center; }
+.approve-hint { color: #a4531a; font-size: 10px; font-weight: 700; }
 .active-issues { display: grid; gap: 7px; margin-bottom: 12px; }
 .issue-card { border: 1px solid #e3d7c4; border-left: 4px solid var(--amber); border-radius: 9px; padding: 11px; background: #fffbf3; }
 .issue-card.error { border-color: #efd1ce; border-left-color: var(--red); background: #fff8f7; }
@@ -151,6 +152,14 @@ sl-textarea::part(textarea) { line-height: 1.65; }
 .diff-column.current { border-left-color: #34795d; background: #f2f9f5; }
 .diff-column span { color: #7b8580; font-size: 8px; font-weight: 800; text-transform: uppercase; }
 .diff-column p { margin: 4px 0 0; font-size: 10px; line-height: 1.5; }
+.version-actions { margin-top: 8px; }
+
+.guard-intro { margin: 0 0 10px; color: #4d5a54; font-size: 12px; line-height: 1.6; }
+.guard-list { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; }
+.guard-list button { display: grid; gap: 3px; text-align: left; border: 1px solid #efd1ce; border-left: 3px solid var(--red); border-radius: 7px; background: #fff8f7; padding: 8px; cursor: pointer; }
+.guard-list button:hover { background: #fcecea; }
+.guard-list b { font-size: 11px; }
+.guard-list small { color: #74807a; font-size: 10px; line-height: 1.4; }
 
 .statusbar { min-height: 30px; padding: 6px 15px; display: flex; justify-content: space-between; color: #9db1a8; background: #1a342c; font-size: 9px; }
 .glossary-editor { display: grid; gap: 8px; max-height: 380px; overflow-y: auto; }

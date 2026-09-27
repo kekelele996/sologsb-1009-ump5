@@ -266,7 +266,8 @@ function analyze(project: ChapterProject): AccessibilityIssue[] {
         });
       }
     }
-    const text = block.type === "image" ? block.text : block.text;
+    // 检查以当前无障碍稿为准：图片看替代文本，其余看无障碍文本（尚未改写时回看原文）
+    const text = block.type === "image" ? block.imageAlt || block.accessibleText : block.accessibleText || block.text;
     const sentences = text.split(/(?<=[。！？!?])\s*/).filter(Boolean);
     for (const [index, sentence] of sentences.entries()) {
       if (sentenceLength(sentence) > (/[A-Za-z]/.test(sentence) ? 28 : 42)) {
@@ -281,9 +282,8 @@ function analyze(project: ChapterProject): AccessibilityIssue[] {
         });
       }
     }
-    const source = `${block.text} ${block.accessibleText}`;
     for (const term of project.glossary) {
-      if (source.includes(term.source) && block.accessibleText && !block.accessibleText.includes(term.preferred)) {
+      if (block.accessibleText.includes(term.source) && !block.accessibleText.includes(term.preferred)) {
         issues.push({
           id: `term-${block.id}-${term.id}`,
           blockId: block.id,
@@ -408,6 +408,7 @@ let activeIssueId = "";
 let previewMode: "normal" | "assisted" = "normal";
 let selectedVersionId = "";
 let showGlossary = false;
+let exportGuardOpen = false;
 let undoStack: ChapterProject[] = [];
 let redoStack: ChapterProject[] = [];
 let saveTimer = 0;
@@ -432,6 +433,16 @@ function commit(label: string, update: (draft: ChapterProject) => void, renderAf
   document.documentElement.dataset.lastAction = label;
   saveSoon();
   if (renderAfter) render();
+}
+
+function saveVersion(label: string) {
+  const versionId = uid("version");
+  commit(label, (draft) => {
+    draft.versions.unshift({ id: versionId, label: `版本 ${draft.versions.length + 1}`, createdAt: new Date().toISOString(), blocks: structuredClone(draft.blocks), glossary: structuredClone(draft.glossary) });
+    draft.versions = draft.versions.slice(0, 10);
+  }, false);
+  selectedVersionId = versionId;
+  render();
 }
 
 function undo() {
@@ -464,6 +475,8 @@ function render() {
   const list = issues();
   const active = activeBlock();
   const activeIssues = list.filter((issue) => issue.blockId === active.id);
+  const activeErrors = activeIssues.filter((issue) => issue.severity === "error");
+  const exportBlockers = list.filter((issue) => issue.severity === "error");
   const approved = project.blocks.filter((block) => block.reviewStatus === "approved").length;
   const version = project.versions.find((item) => item.id === selectedVersionId) ?? project.versions[0];
 
@@ -518,6 +531,7 @@ function render() {
           <div class="editor-head">
             <div><span class="eyebrow">当前内容块</span><h1>${blockRole(active)}</h1></div>
             <div class="review-actions">
+              ${activeErrors.length ? `<span class="approve-hint">处理 ${activeErrors.length} 个必须修复问题后才能通过</span>` : ""}
               <sl-button size="small" variant="${active.reviewStatus === "approved" ? "success" : "default"}" data-action="approve">${active.reviewStatus === "approved" ? "✓ 已通过" : "审核通过"}</sl-button>
               <sl-button size="small" variant="${active.reviewStatus === "needs-work" ? "danger" : "default"}" data-action="needs-work">需修改</sl-button>
             </div>
@@ -584,6 +598,7 @@ function render() {
             ${project.versions.length ? `
               <sl-select id="version-select" size="small" value="${version?.id ?? ""}">${project.versions.map((item) => `<sl-option value="${item.id}">${escapeHtml(item.label)} · ${new Date(item.createdAt).toLocaleTimeString()}</sl-option>`).join("")}</sl-select>
               <div class="version-diff">${version ? renderVersionDiff(version, active) : ""}</div>
+              ${version ? `<div class="version-actions"><sl-button size="small" variant="default" outline data-action="restore-version">恢复此版本（含当时审校进度）</sl-button></div>` : ""}
             ` : `<div class="empty-note">保存版本后，可比较改写前后的无障碍文本。</div>`}
           </section>
         </aside>
@@ -598,6 +613,14 @@ function render() {
       </div>
       <div class="term-add"><sl-input id="new-term-source" placeholder="原文术语"></sl-input><sl-input id="new-term-preferred" placeholder="统一表达"></sl-input><sl-button variant="primary" data-action="add-term">添加术语</sl-button></div>
       <sl-button slot="footer" variant="primary" data-action="close-glossary">完成</sl-button>
+    </sl-dialog>
+
+    <sl-dialog label="导出被拦截：还有必须修复的问题" ${exportGuardOpen ? "open" : ""} data-dialog="export-guard">
+      <p class="guard-intro">以下 ${exportBlockers.length} 个必须修复的问题仍挂在对应段落上，处理并复核后才能导出无障碍 HTML。</p>
+      <div class="guard-list">
+        ${exportBlockers.map((issue) => `<button data-action="jump-issue" data-issue-id="${issue.id}" data-block-id="${issue.blockId}"><b>段 ${project.blocks.findIndex((block) => block.id === issue.blockId) + 1} · ${escapeHtml(issue.title)}</b><small>${escapeHtml(issue.suggestion)}</small></button>`).join("")}
+      </div>
+      <sl-button slot="footer" variant="primary" data-action="close-export-guard">知道了</sl-button>
     </sl-dialog>`;
 
   wireLiveFields();
@@ -645,7 +668,7 @@ function renderPreview() {
 function renderVersionDiff(version: VersionSnapshot, current: ContentBlock) {
   const oldBlock = version.blocks.find((block) => block.id === current.id);
   if (!oldBlock) return `<div class="empty-note">当前内容块不在该版本中。</div>`;
-  return `<div class="diff-column"><span>旧版</span><p>${escapeHtml(oldBlock.accessibleText || oldBlock.text)}</p></div><div class="diff-column current"><span>当前</span><p>${escapeHtml(current.accessibleText || current.text)}</p></div>`;
+  return `<div class="diff-column"><span>旧版 · ${statusLabel(oldBlock.reviewStatus)}</span><p>${escapeHtml(oldBlock.accessibleText || oldBlock.text)}</p></div><div class="diff-column current"><span>当前 · ${statusLabel(current.reviewStatus)}</span><p>${escapeHtml(current.accessibleText || current.text)}</p></div>`;
 }
 
 function wireLiveFields() {
@@ -656,16 +679,20 @@ function wireLiveFields() {
         const field = element.dataset.field;
         if (field === "source") block.text = value;
         if (field === "accessible") {
+          if (block.accessibleText !== value) block.reviewStatus = "pending";
           block.accessibleText = value;
           if (block.type === "image") block.imageAlt = value;
         }
         if (field === "image-alt") {
+          if ((block.imageAlt ?? "") !== value) block.reviewStatus = "pending";
           block.imageAlt = value;
           block.accessibleText = value;
         }
-        if (field === "link-href") block.linkHref = value;
+        if (field === "link-href") {
+          if ((block.linkHref ?? "") !== value) block.reviewStatus = "pending";
+          block.linkHref = value;
+        }
         if (field === "reason") block.changeReason = value;
-        block.reviewStatus = "pending";
       }, "编辑无障碍文本", false);
     });
     element.addEventListener("sl-change", () => render());
@@ -686,6 +713,7 @@ app.addEventListener("click", (event) => {
   if (action === "jump-issue") {
     activeIssueId = target.dataset.issueId ?? "";
     activeBlockId = target.dataset.blockId ?? activeBlockId;
+    exportGuardOpen = false;
     render();
     requestAnimationFrame(() => app.querySelector<HTMLElement>(".editor-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
@@ -701,7 +729,15 @@ app.addEventListener("click", (event) => {
       current.reviewStatus = "pending";
     }, "生成易读版本");
   }
-  if (action === "approve") updateActiveBlock((block) => { block.reviewStatus = "approved"; }, "审核通过");
+  if (action === "approve") {
+    const blockers = issues().filter((issue) => issue.blockId === activeBlock().id && issue.severity === "error");
+    if (blockers.length) {
+      document.documentElement.dataset.lastAction = `当前内容块还有 ${blockers.length} 个必须修复的问题，不能通过`;
+      render();
+    } else {
+      updateActiveBlock((block) => { block.reviewStatus = "approved"; }, "审核通过");
+    }
+  }
   if (action === "needs-work") updateActiveBlock((block) => { block.reviewStatus = "needs-work"; }, "标记需修改");
   if (action === "add-comment") {
     const input = app.querySelector<HTMLElement & { value: string }>("#new-comment");
@@ -740,23 +776,39 @@ app.addEventListener("click", (event) => {
     const termId = target.dataset.termId;
     commit("删除术语", (draft) => { draft.glossary = draft.glossary.filter((term) => term.id !== termId); });
   }
-  if (action === "save-version") {
-    const versionId = uid("version");
-    commit("保存版本快照", (draft) => {
-      draft.versions.unshift({ id: versionId, label: `版本 ${draft.versions.length + 1}`, createdAt: new Date().toISOString(), blocks: structuredClone(draft.blocks), glossary: structuredClone(draft.glossary) });
-      draft.versions = draft.versions.slice(0, 10);
-    });
-    selectedVersionId = versionId;
-    render();
+  if (action === "save-version") saveVersion("保存版本快照");
+  if (action === "restore-version") {
+    const version = project.versions.find((item) => item.id === selectedVersionId) ?? project.versions[0];
+    if (version) {
+      commit("恢复版本快照（含当时审校进度）", (draft) => {
+        draft.blocks = structuredClone(version.blocks);
+        draft.glossary = structuredClone(version.glossary);
+        activeBlockId = draft.blocks[0]?.id ?? "";
+        activeIssueId = "";
+      });
+    }
   }
   if (action === "approve-all") {
-    commit("全部审核通过", (draft) => { draft.blocks.forEach((block) => { block.reviewStatus = "approved"; }); });
-  }
-  if (action === "export") {
-    download(`${project.title}-无障碍版.html`, exportHtml(project));
-    document.documentElement.dataset.lastAction = "已导出无障碍 HTML";
+    const blockedIds = new Set(issues().filter((issue) => issue.severity === "error").map((issue) => issue.blockId));
+    commit("全部审核通过", (draft) => {
+      draft.blocks.forEach((block) => { if (!blockedIds.has(block.id)) block.reviewStatus = "approved"; });
+    }, false);
+    document.documentElement.dataset.lastAction = blockedIds.size ? `已通过合格内容块，${blockedIds.size} 个块因必须修复问题暂缓通过` : "全部审核通过";
     render();
   }
+  if (action === "export") {
+    const blockers = issues().filter((issue) => issue.severity === "error");
+    if (blockers.length) {
+      exportGuardOpen = true;
+      document.documentElement.dataset.lastAction = `导出被拦截：还有 ${blockers.length} 个必须修复的问题待处理`;
+      render();
+    } else {
+      download(`${project.title}-无障碍版.html`, exportHtml(project));
+      document.documentElement.dataset.lastAction = "已导出无障碍 HTML";
+      render();
+    }
+  }
+  if (action === "close-export-guard") { exportGuardOpen = false; render(); }
   if (action === "import") app.querySelector<HTMLInputElement>("#chapter-file")?.click();
 });
 
@@ -765,7 +817,10 @@ app.addEventListener("sl-change", (event) => {
   if (element.id === "chapter-file") return;
   if (element.id.startsWith("heading-level-")) {
     const level = Number((element as HTMLElement & { value: string }).value);
-    updateActiveBlock((block) => { block.headingLevel = level; block.reviewStatus = "pending"; }, "修改标题层级");
+    updateActiveBlock((block) => {
+      if (block.headingLevel !== level) block.reviewStatus = "pending";
+      block.headingLevel = level;
+    }, "修改标题层级");
   }
   if (element.id === "version-select") {
     selectedVersionId = (element as HTMLElement & { value: string }).value;
@@ -798,6 +853,12 @@ app.addEventListener("input", (event) => {
   }
 });
 
+app.addEventListener("sl-hide", (event) => {
+  const dialog = (event.target as HTMLElement).dataset.dialog;
+  if (dialog === "glossary") showGlossary = false;
+  if (dialog === "export-guard") exportGuardOpen = false;
+});
+
 window.addEventListener("online", render);
 window.addEventListener("offline", render);
 window.addEventListener("keydown", (event) => {
@@ -811,9 +872,7 @@ window.addEventListener("keydown", (event) => {
   }
   if (command && event.key.toLowerCase() === "s") {
     event.preventDefault();
-    const versionId = uid("version");
-    commit("键盘保存版本", (draft) => { draft.versions.unshift({ id: versionId, label: `版本 ${draft.versions.length + 1}`, createdAt: new Date().toISOString(), blocks: structuredClone(draft.blocks), glossary: structuredClone(draft.glossary) }); });
-    selectedVersionId = versionId;
+    saveVersion("键盘保存版本");
     return;
   }
   if (event.key.toLowerCase() === "j" || event.key.toLowerCase() === "k") {
